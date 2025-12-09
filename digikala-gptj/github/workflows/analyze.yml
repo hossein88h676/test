@@ -4,7 +4,6 @@ on:
   push:
     paths:
       - "inputs/**"
-      - "tools/analyze_digikala.py"
 
 jobs:
   analyze:
@@ -23,12 +22,20 @@ jobs:
           python -m pip install --upgrade pip
           pip install pandas numpy xlsxwriter transformers torch requests openpyxl
 
+      - name: Detect input file
+        id: vars
+        run: |
+          FILE=$(ls inputs/*.xlsx | head -n 1)
+          echo "file=$FILE" >> $GITHUB_OUTPUT
+          BASENAME=$(basename "$FILE")
+          echo "basename=$BASENAME" >> $GITHUB_OUTPUT
+
       - name: Run analysis
         env:
           HF_API_TOKEN: ${{ secrets.HF_API_TOKEN }}
         run: |
           mkdir -p outputs
-          python tools/analyze_digikala.py --input "inputs/latest.xlsx" --output "outputs/latest.xlsx" --gpt-scope "all"
+          python tools/analyze_digikala.py --input "${{ steps.vars.outputs.file }}" --output "outputs/${{ steps.vars.outputs.basename }}" --gpt-scope "all"
 
       - name: Deploy to Pages
         uses: peaceiris/actions-gh-pages@v3
