@@ -1,9 +1,12 @@
 name: Analyze Digikala with GPT-J
+
 on:
   workflow_dispatch:
   push:
     paths:
       - "inputs/**"
+      - "tools/analyze_digikala.py"
+      - "docs/**"
 
 jobs:
   analyze:
@@ -22,24 +25,73 @@ jobs:
           python -m pip install --upgrade pip
           pip install pandas numpy xlsxwriter transformers torch requests openpyxl
 
+      - name: Ensure folders exist
+        run: |
+          mkdir -p inputs
+          mkdir -p outputs
+          mkdir -p docs
+
       - name: Detect input file
         id: vars
+        shell: bash
         run: |
-          FILE=$(ls inputs/*.xlsx | head -n 1)
-          echo "file=$FILE" >> $GITHUB_OUTPUT
-          BASENAME=$(basename "$FILE")
-          echo "basename=$BASENAME" >> $GITHUB_OUTPUT
+          FILE=$(ls inputs/*.xlsx 2>/dev/null | head -n 1 || true)
+          if [ -z "$FILE" ]; then
+            echo "No .xlsx found in inputs/. Upload an Excel file and rerun." >&2
+            echo "has_file=false" >> $GITHUB_OUTPUT
+          else
+            BASENAME=$(basename "$FILE")
+            echo "file=$FILE" >> $GITHUB_OUTPUT
+            echo "basename=$BASENAME" >> $GITHUB_OUTPUT
+            echo "has_file=true" >> $GITHUB_OUTPUT
+          fi
 
       - name: Run analysis
+        if: steps.vars.outputs.has_file == 'true'
         env:
           HF_API_TOKEN: ${{ secrets.HF_API_TOKEN }}
         run: |
-          mkdir -p outputs
-          python tools/analyze_digikala.py --input "${{ steps.vars.outputs.file }}" --output "outputs/${{ steps.vars.outputs.basename }}" --gpt-scope "all"
+          python tools/analyze_digikala.py \
+            --input "${{ steps.vars.outputs.file }}" \
+            --output "outputs/${{ steps.vars.outputs.basename }}" \
+            --gpt-scope "all"
+
+      - name: Update index with latest output link
+        if: steps.vars.outputs.has_file == 'true'
+        run: |
+          OUT="outputs/${{ steps.vars.outputs.basename }}"
+          # اگر docs/index.html وجود دارد، دست‌نخورده می‌ماند؛ در غیر این صورت یک نسخه‌ی ساده می‌سازیم
+          if [ ! -f docs/index.html ]; then
+            cat > docs/index.html <<'HTML'
+<!doctype html>
+<html lang="fa">
+<head>
+  <meta charset="utf-8" />
+  <title>تحلیل دیجی‌کالا با GPT‑J</title>
+</head>
+<body>
+  <h1>تحلیل صورت‌حساب دیجی‌کالا با GPT‑J</h1>
+  <p>فایل اکسل خود را در پوشه <code>inputs</code> آپلود کنید. پس از پردازش، خروجی در <code>outputs</code> منتشر می‌شود.</p>
+  <h2>📥 خروجی‌های قابل دانلود</h2>
+  <ul id="links">
+  </ul>
+  <script>
+    // لینک‌ها را به‌صورت استاتیک اضافه می‌کنیم؛ فهرست پویا در GitHub Pages محدودیت دارد
+    const list = document.getElementById('links');
+    const hint = document.createElement('p');
+    hint.textContent = 'اگر لینک‌ها خالی است، پس از اولین اجرا، فایل خروجی به این صفحه اضافه خواهد شد.';
+    list.appendChild(hint);
+  </script>
+</body>
+</html>
+HTML
+          fi
+          # اگر فایل index.html هست، یک لینک ساده به آخرین خروجی اضافه می‌کنیم
+          sed -i "s#</ul>#  <li><a href=\"${OUT}\">دانلود ${{ steps.vars.outputs.basename }}</a></li>\n</ul>#g" docs/index.html || true
 
       - name: Deploy to Pages
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_branch: gh-pages
-          publish_dir: .
+          publish_dir: docs
